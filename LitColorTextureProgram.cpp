@@ -51,6 +51,12 @@ LitColorTextureProgram::LitColorTextureProgram() {
 		"uniform mat4 CLIP_FROM_OBJECT;\n"
 		"uniform mat4x3 LIGHT_FROM_OBJECT;\n"
 		"uniform mat3 LIGHT_FROM_NORMAL;\n"
+		/*
+		notes: matrix * vector is transofrming the vector
+		e.g. clip_from_world * world from obj * object vector
+		`in`: everything coming into the vertex shader per-vertex, 首字母大写
+		`out`: everything going out wiht the vertices for further rasterization, all lowercase
+		*/
 		"in vec4 Position;\n"
 		"in vec3 Normal;\n"
 		"in vec4 Color;\n"
@@ -60,8 +66,11 @@ LitColorTextureProgram::LitColorTextureProgram() {
 		"out vec4 color;\n"
 		"out vec2 texCoord;\n"
 		"void main() {\n"
-		"	gl_Position = CLIP_FROM_OBJECT * Position;\n"
+		"	gl_Position = CLIP_FROM_OBJECT * Position;\n" 
 		"	position = LIGHT_FROM_OBJECT * Position;\n"
+		/*
+		outputs to lights space - where we do lights computations
+		*/
 		"	normal = LIGHT_FROM_NORMAL * Normal;\n"
 		"	color = Color;\n"
 		"	texCoord = TexCoord;\n"
@@ -86,6 +95,9 @@ LitColorTextureProgram::LitColorTextureProgram() {
 		"void main() {\n"
 		"	vec3 n = normalize(normal);\n"
 		"	vec3 e;\n"
+		/* notes:
+		computes light energy from various light types
+		*/
 		"	if (LIGHT_TYPE == 0) { //point light \n"
 		"		vec3 l = (LIGHT_LOCATION - position);\n"
 		"		float dis2 = dot(l,l);\n"
