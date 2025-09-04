@@ -32,6 +32,7 @@ MeshBuffer::MeshBuffer(std::string const &filename) {
 		read_chunk(file, "pnct", &data);
 
 		//upload data:
+		//notes: bind first, then unbind
 		glBindBuffer(GL_ARRAY_BUFFER, buffer);
 		glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(Vertex), data.data(), GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);

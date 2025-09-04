@@ -100,6 +100,10 @@ int main(int argc, char **argv) {
 	}
 
 	//Set automatic SRGB encoding if framebuffer needs it:
+	/* notes:
+	if disabled, will draw in linear color space; in linear space, grey colors sit halfway between black and white.
+	so if you see different shades of grey, your're not in linear space. //?? is this correct
+	*/
 	glEnable(GL_FRAMEBUFFER_SRGB);
 
 	//Hide mouse cursor (note: showing can be useful for debugging):
