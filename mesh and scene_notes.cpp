@@ -24,7 +24,11 @@ run blender file, prints some debug info
 our code (old): use light_distance sth
 should update to light_distance sth else
 the collection should call Main
+
+Game 2
+/Applications/Blender.app/Contents/MacOS/Blender -y --background --python scenes/export-meshes.py -- scenes/rope_scene.blend:Main dist/ropegame.pnct
+/Applications/Blender.app/Contents/MacOS/Blender -y --background --python scenes/export-scene.py -- scenes/rope_scene.blend:Main dist/ropegame.scene
+node Maekfile.js && dist/game                                                                                                                       
 */
 
 // makefile
-
