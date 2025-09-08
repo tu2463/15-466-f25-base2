@@ -24,17 +24,23 @@ struct PlayMode : Mode {
 		uint8_t pressed = 0;
 	} left, right, down, up;
 
+	// jumper
+	Scene::Transform* jumper = nullptr;        // found by name "Jumper"
+	glm::vec3         jumper_base_position = {};    // where it stands on the floor
+	float             jumper_time = 0.0f;      // accumulative time (s)
+	float             jumper_amp  = 3.0f;      // jump height in scene units (tweakable)
+
 	//local copy of the game scene (so code can change it during gameplay):
 	Scene scene;
 
 	//hexapod leg to wobble:
-	Scene::Transform *hip = nullptr;
-	Scene::Transform *upper_leg = nullptr;
-	Scene::Transform *lower_leg = nullptr;
-	glm::quat hip_base_rotation;
-	glm::quat upper_leg_base_rotation;
-	glm::quat lower_leg_base_rotation;
-	float wobble = 0.0f;
+	// Scene::Transform *hip = nullptr;
+	// Scene::Transform *upper_leg = nullptr;
+	// Scene::Transform *lower_leg = nullptr;
+	// glm::quat hip_base_rotation;
+	// glm::quat upper_leg_base_rotation;
+	// glm::quat lower_leg_base_rotation;
+	// float wobble = 0.0f;
 	
 	//camera:
 	Scene::Camera *camera = nullptr;

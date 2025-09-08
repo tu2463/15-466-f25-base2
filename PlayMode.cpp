@@ -12,6 +12,8 @@
 
 #include <random>
 
+static constexpr glm::vec3 WORLD_UP = glm::vec3(0.0f, 0.0f, 1.0f);
+
 GLuint rope_meshes_for_lit_color_texture_program = 0;
 
 Load< MeshBuffer > rope_meshes(LoadTagDefault, []() -> MeshBuffer const * {
@@ -42,6 +44,16 @@ PlayMode::PlayMode() : scene(*rope_scene) {
 	//get pointer to camera for convenience:
 	if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
 	camera = &scene.cameras.front();
+
+	//get pointer to Jumper for convenience:
+	for (auto &transform : scene.transformansforms) {
+		if (transform.name == "Jumper") {
+			jumper = &transform;
+			jumper_base_position = transform.position;
+			break;
+		}
+	}
+	if (!jumper) throw std::runtime_error("Jumper not found.");
 }
 
 PlayMode::~PlayMode() {
@@ -108,17 +120,6 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 }
 
 void PlayMode::update(float elapsed) {
-
-	// Rotate a transform named "Cube" if present (temporary visual check):
-	static float t = 0.0f;
-	t += elapsed;
-	for (auto &tr : scene.transforms) {
-		if (tr.name == "Cube") {
-			tr.rotation = glm::angleAxis(t, glm::vec3(0.0f, 1.0f, 0.0f));
-			break;
-		}
-	}
-
 	//move camera:
 	{
 
@@ -139,6 +140,18 @@ void PlayMode::update(float elapsed) {
 		glm::vec3 frame_forward = -frame[2];
 
 		camera->transform->position += move.x * frame_right + move.y * frame_forward;
+	}
+
+	// --- Jumper: rise/fall once per second) ---
+	{
+		if (jumper) {
+			// Credit: Used ChatGPT to help me with the math to create jumping animation.
+			jumper_time += elapsed;                      // accumulate seconds
+			float phase = jumper_time - std::floor(jumper_time); // [0,1)
+			// half-sine: feet on ground for half the cycle, airborne for half:
+    		float z_offset = jumper_amp * std::max(0.0f, std::sin(2.0f * float(M_PI) * phase));
+			jumper->position = jumper_base_position + WORLD_UP * z_offset;
+		}
 	}
 
 	//reset button press counters:
