@@ -12,7 +12,8 @@
 
 #include <random>
 
-static constexpr glm::vec3 WORLD_UP = glm::vec3(0.0f, 0.0f, 1.0f);
+static constexpr glm::vec3 WORLD_Y = glm::vec3(0.0f, 1.0f, 0.0f);
+static constexpr glm::vec3 WORLD_Z = glm::vec3(0.0f, 0.0f, 1.0f);
 
 GLuint rope_meshes_for_lit_color_texture_program = 0;
 
@@ -46,14 +47,21 @@ PlayMode::PlayMode() : scene(*rope_scene) {
 	camera = &scene.cameras.front();
 
 	//get pointer to Jumper for convenience:
-	for (auto &transform : scene.transformansforms) {
-		if (transform.name == "Jumper") {
-			jumper = &transform;
-			jumper_base_position = transform.position;
-			break;
-		}
+	// Credit: imitate the starter code
+	for (auto &transform : scene.transforms) {
+		if (transform.name == "Jumper") jumper = &transform;
+		else if (transform.name == "Blob1") left_anchor = &transform;
+		else if (transform.name == "Blob2") right_anchor = &transform;
+    	else if (transform.name == "Rope")  rope = &transform;
 	}
 	if (!jumper) throw std::runtime_error("Jumper not found.");
+	if (!left_anchor || !right_anchor) throw std::runtime_error("Anchors Blob1/Blob2 not found.");
+	if (!rope) throw std::runtime_error("Rope transform not found.");
+
+	// remember jumper and rope's initial position/orientation so we can move them on top of these values
+	jumper_base_position = jumper->position;
+	rope_base_rotation = rope->rotation;
+	rope->position = 0.5f * (left_anchor->position + right_anchor->position);
 }
 
 PlayMode::~PlayMode() {
@@ -62,10 +70,7 @@ PlayMode::~PlayMode() {
 bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
 
 	if (evt.type == SDL_EVENT_KEY_DOWN) {
-		if (evt.key.key == SDLK_ESCAPE) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, false);
-			return true;
-		} else if (evt.key.key == SDLK_A) {
+		if (evt.key.key == SDLK_A) {
 			left.downs += 1;
 			left.pressed = true;
 			return true;
@@ -96,24 +101,36 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 			down.pressed = false;
 			return true;
 		}
-	} else if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == false) {
-			SDL_SetWindowRelativeMouseMode(Mode::window, true);
+	}  else if (evt.type == SDL_EVENT_MOUSE_MOTION) {
+		// if (SDL_GetWindowRelativeMouseMode(Mode::window) == true) {
+			// glm::vec2 motion = glm::vec2(
+			// 	evt.motion.xrel / float(window_size.y),
+			// 	-evt.motion.yrel / float(window_size.y)
+			// );
+			// camera->transform->rotation = glm::normalize(
+			// 	camera->transform->rotation
+			// 	* glm::angleAxis(-motion.x * camera->fovy, glm::vec3(0.0f, 1.0f, 0.0f))
+			// 	* glm::angleAxis( motion.y * camera->fovy, glm::vec3(1.0f, 0.0f, 0.0f))
+			// );
+
+			// accumulate a horizontal “cursor” in [-1,1] from xrel: //??
+			cursor_x_norm += (evt.motion.xrel / float(window_size.x)) * 2.0f; // sensitivity
+			cursor_x_norm = glm::clamp(cursor_x_norm, -1.0f, 1.0f);
+
+			// map cursor to target tilt around X:
+			rope_theta_target = glm::clamp(cursor_x_norm, -1.0f, 1.0f) * rope_max_tilt;
+
+			// // Use vertical instead of horizontal to feel “down/up”:
+			// cursor_x_norm += (-evt.motion.yrel / float(window_size.y)) * 2.0f; // negative so moving down tilts down
+			// cursor_x_norm  = glm::clamp(cursor_x_norm, -1.0f, 1.0f);
+
+			// // Allow deeper tilt:
+			// rope_max_tilt = glm::radians(170.0f);  // was 80.0f
+			// rope_theta_target = cursor_x_norm * rope_max_tilt;
+
+
 			return true;
-		}
-	} else if (evt.type == SDL_EVENT_MOUSE_MOTION) {
-		if (SDL_GetWindowRelativeMouseMode(Mode::window) == true) {
-			glm::vec2 motion = glm::vec2(
-				evt.motion.xrel / float(window_size.y),
-				-evt.motion.yrel / float(window_size.y)
-			);
-			camera->transform->rotation = glm::normalize(
-				camera->transform->rotation
-				* glm::angleAxis(-motion.x * camera->fovy, glm::vec3(0.0f, 1.0f, 0.0f))
-				* glm::angleAxis(motion.y * camera->fovy, glm::vec3(1.0f, 0.0f, 0.0f))
-			);
-			return true;
-		}
+		// }
 	}
 
 	return false;
@@ -142,7 +159,7 @@ void PlayMode::update(float elapsed) {
 		camera->transform->position += move.x * frame_right + move.y * frame_forward;
 	}
 
-	// --- Jumper: rise/fall once per second) ---
+	// --- Jumper (rise/fall once per second) ---
 	{
 		if (jumper) {
 			// Credit: Used ChatGPT to help me with the math to create jumping animation.
@@ -150,9 +167,28 @@ void PlayMode::update(float elapsed) {
 			float phase = jumper_time - std::floor(jumper_time); // [0,1)
 			// half-sine: feet on ground for half the cycle, airborne for half:
     		float z_offset = jumper_amp * std::max(0.0f, std::sin(2.0f * float(M_PI) * phase));
-			jumper->position = jumper_base_position + WORLD_UP * z_offset;
+			jumper->position = jumper_base_position + WORLD_Z * z_offset;
 		}
 	}
+
+	// --- Rope (rotation around x, towards cursor) ---
+	// 1) keep rope transform centered between anchors:
+    if (rope && left_anchor && right_anchor) {
+        const glm::vec3 mid = 0.5f * (left_anchor->position + right_anchor->position);
+        rope->position = mid;
+
+        // 2) slew rope_theta -> rope_theta_target with a max speed:
+        float err = rope_theta_target - rope_theta;
+        // wrap to [-pi,pi] to get shortest path (optional but nice):
+        err = std::atan2(std::sin(err), std::cos(err));
+        float max_step = rope_slew_rate * elapsed;
+        float step = glm::clamp(err, -max_step, max_step);
+        rope_theta += step;
+
+        // 3) rotate around Y
+        rope->rotation = rope_base_rotation * glm::angleAxis(rope_theta, WORLD_Y);
+		printf("rope->rotation: (%f, %f, %f, %f)\n", rope->rotation.w, rope->rotation.x, rope->rotation.y, rope->rotation.z);
+    }
 
 	//reset button press counters:
 	left.downs = 0;
