@@ -1,8 +1,8 @@
-# (TODO: your game's title)
+# Long Rope Jumping Blobs
 
-Author: (TODO: your name)
+Author: Cheyu Tu
 
-Design: (TODO: In two sentences or fewer, describe what is new and interesting about your game.)
+Design: Three blobs are playing long rope jumping. Player's job is to control the turner blobs to sway the row.
 
 Screen Shot:
 
@@ -10,6 +10,6 @@ Screen Shot:
 
 How To Play:
 
-(TODO: describe the controls and (if needed) goals/strategy.)
+Goal: Let the jumper blob successfully jump 20 times in sequence.
 
 This game was built with [NEST](NEST.md).

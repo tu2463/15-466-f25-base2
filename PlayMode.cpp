@@ -67,98 +67,32 @@ PlayMode::PlayMode() : scene(*rope_scene) {
 PlayMode::~PlayMode() {
 }
 
-bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
+bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
+{
+	if (evt.type == SDL_EVENT_MOUSE_MOTION)
+	{
+		// accumulate a horizontal “cursor” in [-1,1] from xrel: //??
+		cursor_x_norm += (evt.motion.xrel / float(window_size.x)) * 2.0f; // sensitivity
+		cursor_x_norm = glm::clamp(cursor_x_norm, -1.0f, 1.0f);
 
-	if (evt.type == SDL_EVENT_KEY_DOWN) {
-		if (evt.key.key == SDLK_A) {
-			left.downs += 1;
-			left.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_D) {
-			right.downs += 1;
-			right.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_W) {
-			up.downs += 1;
-			up.pressed = true;
-			return true;
-		} else if (evt.key.key == SDLK_S) {
-			down.downs += 1;
-			down.pressed = true;
-			return true;
-		}
-	} else if (evt.type == SDL_EVENT_KEY_UP) {
-		if (evt.key.key == SDLK_A) {
-			left.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_D) {
-			right.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_W) {
-			up.pressed = false;
-			return true;
-		} else if (evt.key.key == SDLK_S) {
-			down.pressed = false;
-			return true;
-		}
-	}  else if (evt.type == SDL_EVENT_MOUSE_MOTION) {
-		// if (SDL_GetWindowRelativeMouseMode(Mode::window) == true) {
-			// glm::vec2 motion = glm::vec2(
-			// 	evt.motion.xrel / float(window_size.y),
-			// 	-evt.motion.yrel / float(window_size.y)
-			// );
-			// camera->transform->rotation = glm::normalize(
-			// 	camera->transform->rotation
-			// 	* glm::angleAxis(-motion.x * camera->fovy, glm::vec3(0.0f, 1.0f, 0.0f))
-			// 	* glm::angleAxis( motion.y * camera->fovy, glm::vec3(1.0f, 0.0f, 0.0f))
-			// );
+		// map cursor to target tilt around X:
+		rope_theta_target = glm::clamp(cursor_x_norm, -1.0f, 1.0f) * rope_max_tilt;
 
-			// accumulate a horizontal “cursor” in [-1,1] from xrel: //??
-			cursor_x_norm += (evt.motion.xrel / float(window_size.x)) * 2.0f; // sensitivity
-			cursor_x_norm = glm::clamp(cursor_x_norm, -1.0f, 1.0f);
+		// // Use vertical instead of horizontal to feel “down/up”:
+		// cursor_x_norm += (-evt.motion.yrel / float(window_size.y)) * 2.0f; // negative so moving down tilts down
+		// cursor_x_norm  = glm::clamp(cursor_x_norm, -1.0f, 1.0f);
 
-			// map cursor to target tilt around X:
-			rope_theta_target = glm::clamp(cursor_x_norm, -1.0f, 1.0f) * rope_max_tilt;
+		// // Allow deeper tilt:
+		// rope_max_tilt = glm::radians(170.0f);  // was 80.0f
+		// rope_theta_target = cursor_x_norm * rope_max_tilt;
 
-			// // Use vertical instead of horizontal to feel “down/up”:
-			// cursor_x_norm += (-evt.motion.yrel / float(window_size.y)) * 2.0f; // negative so moving down tilts down
-			// cursor_x_norm  = glm::clamp(cursor_x_norm, -1.0f, 1.0f);
-
-			// // Allow deeper tilt:
-			// rope_max_tilt = glm::radians(170.0f);  // was 80.0f
-			// rope_theta_target = cursor_x_norm * rope_max_tilt;
-
-
-			return true;
-		// }
+		return true;
 	}
-
 	return false;
 }
 
-void PlayMode::update(float elapsed) {
-	//move camera:
-	{
-
-		//combine inputs into a move:
-		constexpr float PlayerSpeed = 30.0f;
-		glm::vec2 move = glm::vec2(0.0f);
-		if (left.pressed && !right.pressed) move.x =-1.0f;
-		if (!left.pressed && right.pressed) move.x = 1.0f;
-		if (down.pressed && !up.pressed) move.y =-1.0f;
-		if (!down.pressed && up.pressed) move.y = 1.0f;
-
-		//make it so that moving diagonally doesn't go faster:
-		if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
-
-		glm::mat4x3 frame = camera->transform->make_parent_from_local();
-		glm::vec3 frame_right = frame[0];
-		//glm::vec3 up = frame[1];
-		glm::vec3 frame_forward = -frame[2];
-
-		camera->transform->position += move.x * frame_right + move.y * frame_forward;
-	}
-
+void PlayMode::update(float elapsed)
+{
 	// --- Jumper (rise/fall once per second) ---
 	{
 		if (jumper) {
