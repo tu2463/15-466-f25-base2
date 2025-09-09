@@ -22,3 +22,5 @@ Color reference (I mostly picked the colors from this image): https://lospec.com
 The scene file is scenes/rope_scene.blend
 
 This game was built with [NEST](NEST.md).
+
+Base code for Game 2: http://graphics.cs.cmu.edu/courses/15-466-f25/game2.html .
