@@ -24,13 +24,13 @@ struct PlayMode : Mode {
 		uint8_t pressed = 0;
 	} left, right, down, up;
 
-	// jumper
+	// --- jumper ---
 	Scene::Transform* jumper = nullptr;        // transform named "Jumper"
 	glm::vec3         jumper_base_position = {};    // initial position
 	float             jumper_time = 0.0f;      // accumulative time (s)
 	float             jumper_amp  = 3.0f;      // jump height
 
-	// rope
+	// --- rope ---
 	Scene::Transform* rope = nullptr;     // transform named "Rope"
 	Scene::Transform* left_anchor = nullptr;   // e.g., "Blob1"
 	Scene::Transform* right_anchor = nullptr;  // e.g., "Blob2"
@@ -41,9 +41,19 @@ struct PlayMode : Mode {
 	float      rope_slew_rate = glm::radians(360.0f); // max change/sec toward target
 	float      cursor_x_norm = 0.0f;              // [-1,1] from mouse motion accumulation
 
-	// tune how far the rope can “tilt” toward/away from the player:
 	float      rope_max_tilt = glm::radians(360.0f);  // clamp target angle
 
+	// --- Panel control (screen-space overlay in DrawLines coords) ---
+	glm::vec2 panel_center = glm::vec2(0.0f); // computed each frame from window aspect
+	float     panel_radius = 0.22f;           // overlay units (x in [-aspect,+aspect], y in [-1,+1])
+	float     panel_margin = 0.10f;           // distance from screen edge (overlay units)
+
+	bool      panel_dragging = false;         // left mouse held on panel
+	glm::vec2 handle_pos_ol = glm::vec2(0.0f); // handle position in overlay coords
+	float     panel_angle   = 0.0f;           // radians, 12 o'clock = 0, clockwise positive
+
+	// (optional) ignore noisy motion near center:
+	float     panel_dead_frac = 0.06f;        // deadzone radius as fraction of panel_radius
 
 	//local copy of the game scene (so code can change it during gameplay):
 	Scene scene;

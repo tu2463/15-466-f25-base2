@@ -14,6 +14,39 @@
 
 static constexpr glm::vec3 WORLD_Y = glm::vec3(0.0f, 1.0f, 0.0f);
 static constexpr glm::vec3 WORLD_Z = glm::vec3(0.0f, 0.0f, 1.0f);
+static constexpr int gravity = 9.81;
+
+namespace
+{
+	// pixel → overlay (DrawLines) coords: x ∈ [-aspect,+aspect], y ∈ [-1,+1]
+	inline glm::vec2 pixel_to_overlay(glm::uvec2 win, glm::ivec2 px)
+	{
+		float aspect = float(win.x) / float(win.y);
+		float ox = ((float(px.x) / float(win.x)) * 2.0f - 1.0f) * aspect;
+		float oy = 1.0f - (float(px.y) / float(win.y)) * 2.0f;
+		return glm::vec2(ox, oy);
+	}
+
+	// clamp a point to a disk of radius R around C (overlay coords)
+	inline glm::vec2 clamp_to_disk(glm::vec2 p, glm::vec2 c, float R)
+	{
+		glm::vec2 v = p - c;
+		float d = glm::length(v);
+		if (d <= R || d == 0.0f)
+			return p;
+		return c + v * (R / d);
+	}
+
+	// signed angle with 12 o'clock = 0 and clockwise positive:
+	// top (0,+R) -> 0; right (+R,0) -> +pi/2; bottom (0,-R) -> ±pi; left (-R,0) -> -pi/2
+	inline float angle_from_top_cw(glm::vec2 v)
+	{
+		return std::atan2(v.x, v.y); // thanks to overlay +Y up, this gives desired mapping
+	}
+
+	// shortest wrapped delta to [-pi,pi]
+	// inline float wrap_pi(float a) { return std::atan2(std::sin(a), std::cos(a)); }
+} // namespace
 
 GLuint rope_meshes_for_lit_color_texture_program = 0;
 
@@ -67,28 +100,50 @@ PlayMode::PlayMode() : scene(*rope_scene) {
 PlayMode::~PlayMode() {
 }
 
-bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
-{
-	if (evt.type == SDL_EVENT_MOUSE_MOTION)
-	{
-		// accumulate a horizontal “cursor” in [-1,1] from xrel: //??
-		cursor_x_norm += (evt.motion.xrel / float(window_size.x)) * 2.0f; // sensitivity
-		cursor_x_norm = glm::clamp(cursor_x_norm, -1.0f, 1.0f);
+bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
+    float aspect = float(window_size.x) / float(window_size.y);
 
-		// map cursor to target tilt around X:
-		rope_theta_target = glm::clamp(cursor_x_norm, -1.0f, 1.0f) * rope_max_tilt;
+    // Place the panel in bottom-right with a margin:
+    panel_center = glm::vec2( aspect - (panel_margin + panel_radius),
+                             -1.0f    + (panel_margin + panel_radius) );
 
-		// // Use vertical instead of horizontal to feel “down/up”:
-		// cursor_x_norm += (-evt.motion.yrel / float(window_size.y)) * 2.0f; // negative so moving down tilts down
-		// cursor_x_norm  = glm::clamp(cursor_x_norm, -1.0f, 1.0f);
+    if (evt.type == SDL_EVENT_MOUSE_BUTTON_DOWN && evt.button.button == SDL_BUTTON_LEFT) {
+        glm::vec2 m_ol = pixel_to_overlay(window_size, {evt.button.x, evt.button.y});
+        float R = panel_radius;
+        if (glm::length(m_ol - panel_center) <= R) {
+            panel_dragging = true;
+            handle_pos_ol = clamp_to_disk(m_ol, panel_center, R);
+            glm::vec2 v = handle_pos_ol - panel_center;
+            float dead = panel_dead_frac * R;
+            if (glm::length(v) >= dead) {
+                panel_angle = angle_from_top_cw(v);
+                rope_theta_target = panel_angle; // direct mapping: panel angle = rope target
+            }
+            return true;
+        }
+    }
+    else if (evt.type == SDL_EVENT_MOUSE_BUTTON_UP && evt.button.button == SDL_BUTTON_LEFT) {
+        panel_dragging = false;
+        return true;
+    }
+    else if (evt.type == SDL_EVENT_MOUSE_MOTION) {
+        glm::vec2 m_ol = pixel_to_overlay(window_size, {evt.motion.x, evt.motion.y});
+        float R = panel_radius;
 
-		// // Allow deeper tilt:
-		// rope_max_tilt = glm::radians(170.0f);  // was 80.0f
-		// rope_theta_target = cursor_x_norm * rope_max_tilt;
+        // if dragging, the handle follows the cursor; otherwise leave it in-place
+        if (panel_dragging) {
+            handle_pos_ol = clamp_to_disk(m_ol, panel_center, R);
+            glm::vec2 v = handle_pos_ol - panel_center;
+            float dead = panel_dead_frac * R;
+            if (glm::length(v) >= dead) {
+                panel_angle = angle_from_top_cw(v);
+                rope_theta_target = panel_angle;
+            }
+            return true;
+        }
+    }
 
-		return true;
-	}
-	return false;
+    return false;
 }
 
 void PlayMode::update(float elapsed)
@@ -106,21 +161,19 @@ void PlayMode::update(float elapsed)
 	}
 
 	// --- Rope (rotation around x, towards cursor) ---
-	// 1) keep rope transform centered between anchors:
     if (rope && left_anchor && right_anchor) {
         const glm::vec3 mid = 0.5f * (left_anchor->position + right_anchor->position);
         rope->position = mid;
 
-        // 2) slew rope_theta -> rope_theta_target with a max speed:
+		// Credit: Used ChatGPT to help me with the math to create the rope rotation.
         float err = rope_theta_target - rope_theta;
-        // wrap to [-pi,pi] to get shortest path (optional but nice):
-        err = std::atan2(std::sin(err), std::cos(err));
+        err = std::atan2(std::sin(err), std::cos(err)); // wrap to [-pi,pi] to get shortest path:
         float max_step = rope_slew_rate * elapsed;
         float step = glm::clamp(err, -max_step, max_step);
         rope_theta += step;
 
         // 3) rotate around Y
-        rope->rotation = rope_base_rotation * glm::angleAxis(rope_theta, WORLD_Y);
+		rope->rotation = rope_base_rotation * glm::angleAxis(rope_theta, WORLD_Y);
 		printf("rope->rotation: (%f, %f, %f, %f)\n", rope->rotation.w, rope->rotation.x, rope->rotation.y, rope->rotation.z);
     }
 
@@ -165,14 +218,72 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		));
 
 		constexpr float H = 0.09f;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
+		lines.draw_text("Click and drag in the bottom right circle to sway the rope. Try to jump more continuously!", // any better ideas for this instruction? need to be no longer than this
 			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
 			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
 			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
 		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + 0.1f * H + ofs, 0.0),
-			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
-			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+		lines.draw_text("Click and drag in the bottom right circle to sway the rope. Try to jump more continuously",
+						glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + 0.1f * H + ofs, 0.0),
+						glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+						glm::u8vec4(0xff, 0xff, 0xff, 0x00));
+	}
+
+	{ //use DrawLines to overlay the control panel and handle
+		// Credit: Used ChatGPT to help me with the math to get the handle rotation angle and map to rope rotation angle.
+		glDisable(GL_DEPTH_TEST);
+		float aspect = float(drawable_size.x) / float(drawable_size.y);
+		DrawLines lines(glm::mat4(
+			1.0f / aspect, 0.0f, 0.0f, 0.0f,
+			0.0f, 1.0f, 0.0f, 0.0f,
+			0.0f, 0.0f, 1.0f, 0.0f,
+			0.0f, 0.0f, 0.0f, 1.0f));
+
+		// compute center every frame (matches handle_event)
+		panel_center = glm::vec2(aspect - (panel_margin + panel_radius),
+								 -1.0f + (panel_margin + panel_radius));
+		float R = panel_radius;
+
+		glm::u8vec4 ring_col = glm::u8vec4(0x22, 0x22, 0x22, 0xff);
+		glm::u8vec4 ref_col = glm::u8vec4(0xdd, 0x66, 0x66, 0xff); // 12 o'clock ray
+		glm::u8vec4 handle_col = glm::u8vec4(0xff, 0xff, 0xff, 0xff);
+		glm::u8vec4 guide_col = glm::u8vec4(0x88, 0x88, 0x88, 0xff);
+
+		// ring (approximate circle)
+		const int N = 64;
+		for (int i = 0; i < N; ++i)
+		{
+			float a0 = (float(i) / N) * 2.0f * float(M_PI);
+			float a1 = (float(i + 1) / N) * 2.0f * float(M_PI);
+			glm::vec3 p0 = glm::vec3(panel_center + R * glm::vec2(std::cos(a0), std::sin(a0)), 0.0f);
+			glm::vec3 p1 = glm::vec3(panel_center + R * glm::vec2(std::cos(a1), std::sin(a1)), 0.0f);
+			lines.draw(p0, p1, ring_col);
+		}
+
+		// 12 o'clock reference ray
+		glm::vec3 c3 = glm::vec3(panel_center, 0.0f);
+		glm::vec3 top = glm::vec3(panel_center + glm::vec2(0.0f, R), 0.0f);
+		lines.draw(c3, top, ref_col);
+
+		// current angle ray (from center to handle; recompute if handle never moved)
+		glm::vec2 hp = handle_pos_ol;
+		if (!panel_dragging && glm::length(hp - panel_center) < 1e-4f)
+		{
+			// place the handle at current rope target if not yet moved:
+			glm::vec2 v = glm::vec2(std::sin(rope_theta_target), std::cos(rope_theta_target)); // inverse of angle_from_top_cw
+			hp = panel_center + v * (R * 0.85f);
+		}
+		lines.draw(c3, glm::vec3(hp, 0.0f), guide_col);
+
+		// draw the handle as a small circle:
+		float rH = R * 0.08f;
+		for (int i = 0; i < N; ++i)
+		{
+			float a0 = (float(i) / N) * 2.0f * float(M_PI);
+			float a1 = (float(i + 1) / N) * 2.0f * float(M_PI);
+			glm::vec3 p0 = glm::vec3(hp + rH * glm::vec2(std::cos(a0), std::sin(a0)), 0.0f);
+			glm::vec3 p1 = glm::vec3(hp + rH * glm::vec2(std::cos(a1), std::sin(a1)), 0.0f);
+			lines.draw(p0, p1, handle_col);
+		}
 	}
 }
