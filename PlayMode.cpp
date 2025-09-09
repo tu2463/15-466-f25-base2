@@ -14,7 +14,6 @@
 
 static constexpr glm::vec3 WORLD_Y = glm::vec3(0.0f, 1.0f, 0.0f);
 static constexpr glm::vec3 WORLD_Z = glm::vec3(0.0f, 0.0f, 1.0f);
-static constexpr int gravity = 9.81;
 
 namespace
 {
@@ -95,6 +94,11 @@ PlayMode::PlayMode() : scene(*rope_scene) {
 	jumper_base_position = jumper->position;
 	rope_base_rotation = rope->rotation;
 	rope->position = 0.5f * (left_anchor->position + right_anchor->position);
+
+	// Credit: Stack Overflow discussion on basic gravity jump physics: https://stackoverflow.com/questions/55373206/basic-gravity-implementation-in-opengl
+	jump_v0 = 0.5f * jump_g * jump_T; 
+	jump_vz = jump_v0;
+	jump_z  = 0.0f;
 }
 
 PlayMode::~PlayMode() {
@@ -137,7 +141,7 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
             float dead = panel_dead_frac * R;
             if (glm::length(v) >= dead) {
                 panel_angle = angle_from_top_cw(v);
-                rope_theta_target = panel_angle;
+                rope_theta_target = -panel_angle;
             }
             return true;
         }
@@ -148,17 +152,37 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 void PlayMode::update(float elapsed)
 {
-	// --- Jumper (rise/fall once per second) ---
-	{
-		if (jumper) {
-			// Credit: Used ChatGPT to help me with the math to create jumping animation.
-			jumper_time += elapsed;                      // accumulate seconds
-			float phase = jumper_time - std::floor(jumper_time); // [0,1)
-			// half-sine: feet on ground for half the cycle, airborne for half:
-    		float z_offset = jumper_amp * std::max(0.0f, std::sin(2.0f * float(M_PI) * phase));
-			jumper->position = jumper_base_position + WORLD_Z * z_offset;
+	// // --- Jumper (rise/fall once per second) ---
+	// {
+	// 	if (jumper) {
+	// 		// Credit: Used ChatGPT to help me with the math to create jumping animation.
+	// 		jumper_time += elapsed;                      // accumulate seconds
+	// 		float phase = jumper_time - std::floor(jumper_time); // [0,1)
+	// 		// half-sine: feet on ground for half the cycle, airborne for half:
+    // 		float z_offset = jumper_amp * std::max(0.0f, std::sin(2.0f * float(M_PI) * phase));
+	// 		jumper->position = jumper_base_position + WORLD_Z * z_offset;
+	// 	}
+	// }
+
+	// --- Jumper: gravity-based ballistic jump (exactly 1 Hz) ---
+	if (jumper) {
+		// substep if needed to keep integration stable on large elapsed:
+		float remaining = elapsed;
+		while (remaining > 0.0f) {
+			float dt = std::min(remaining, 1.0f / 120.0f); // up to 120 Hz substeps
+
+			jump_vz -= jump_g * dt;     // v = v + a * dt (a = -g) = v - g * dt
+			jump_z  += jump_vz * dt;    // z = z + v * dt
+
+			if (jump_z <= 0.0f) {       // landed: clamp & relaunch
+				jump_z = 0.0f;
+				jump_vz = jump_v0;      // restart next hop
+			}
+			remaining -= dt;
 		}
+		jumper->position = jumper_base_position + WORLD_Z * jump_z;
 	}
+
 
 	// --- Rope (rotation around x, towards cursor) ---
     if (rope && left_anchor && right_anchor) {
@@ -171,10 +195,8 @@ void PlayMode::update(float elapsed)
         float max_step = rope_slew_rate * elapsed;
         float step = glm::clamp(err, -max_step, max_step);
         rope_theta += step;
-
-        // 3) rotate around Y
 		rope->rotation = rope_base_rotation * glm::angleAxis(rope_theta, WORLD_Y);
-		printf("rope->rotation: (%f, %f, %f, %f)\n", rope->rotation.w, rope->rotation.x, rope->rotation.y, rope->rotation.z);
+		// printf("rope->rotation: (%f, %f, %f, %f)\n", rope->rotation.w, rope->rotation.x, rope->rotation.y, rope->rotation.z);
     }
 
 	//reset button press counters:
@@ -270,7 +292,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		if (!panel_dragging && glm::length(hp - panel_center) < 1e-4f)
 		{
 			// place the handle at current rope target if not yet moved:
-			glm::vec2 v = glm::vec2(std::sin(rope_theta_target), std::cos(rope_theta_target)); // inverse of angle_from_top_cw
+			glm::vec2 v = glm::vec2(std::sin(-rope_theta_target), std::cos(-rope_theta_target)); // inverse of angle_from_top_cw
 			hp = panel_center + v * (R * 0.85f);
 		}
 		lines.draw(c3, glm::vec3(hp, 0.0f), guide_col);

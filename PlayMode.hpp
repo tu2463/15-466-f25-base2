@@ -27,8 +27,13 @@ struct PlayMode : Mode {
 	// --- jumper ---
 	Scene::Transform* jumper = nullptr;        // transform named "Jumper"
 	glm::vec3         jumper_base_position = {};    // initial position
-	float             jumper_time = 0.0f;      // accumulative time (s)
-	float             jumper_amp  = 3.0f;      // jump height
+
+	// Credit: Stack Overflow discussion on basic gravity jump physics: https://stackoverflow.com/questions/55373206/basic-gravity-implementation-in-opengl
+	float jump_g    = 20.0f;  // m/s^2-ish scene units
+	float jump_T    = 1.0f;   // seconds per full jump
+	float jump_v0   = 0.0f;   // computed in ctor
+	float jump_vz   = 0.0f;   // current vertical velocity
+	float jump_z    = 0.0f;   // height above base (meters/scene units)
 
 	// --- rope ---
 	Scene::Transform* rope = nullptr;     // transform named "Rope"
@@ -44,6 +49,7 @@ struct PlayMode : Mode {
 	float      rope_max_tilt = glm::radians(360.0f);  // clamp target angle
 
 	// --- Panel control (screen-space overlay in DrawLines coords) ---
+	// Credit: Used ChatGPT to help me with the math here.
 	glm::vec2 panel_center = glm::vec2(0.0f); // computed each frame from window aspect
 	float     panel_radius = 0.22f;           // overlay units (x in [-aspect,+aspect], y in [-1,+1])
 	float     panel_margin = 0.10f;           // distance from screen edge (overlay units)
