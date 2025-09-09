@@ -17,6 +17,7 @@ static constexpr glm::vec3 WORLD_Z = glm::vec3(0.0f, 0.0f, 1.0f);
 
 namespace
 {
+	// Credit: used ChatGPT to help me with the math
 	// pixel → overlay (DrawLines) coords: x ∈ [-aspect,+aspect], y ∈ [-1,+1]
 	inline glm::vec2 pixel_to_overlay(glm::uvec2 win, glm::ivec2 px)
 	{
@@ -90,10 +91,12 @@ PlayMode::PlayMode() : scene(*rope_scene) {
 	if (!left_anchor || !right_anchor) throw std::runtime_error("Anchors Blob1/Blob2 not found.");
 	if (!rope) throw std::runtime_error("Rope transform not found.");
 
-	// remember jumper and rope's initial position/orientation so we can move them on top of these values
+	// remember jumper and rope's initial position/orientation/movement data so we can move them on top of these values
 	jumper_base_position = jumper->position;
 	rope_base_rotation = rope->rotation;
 	rope->position = 0.5f * (left_anchor->position + right_anchor->position);
+	jump_T0  = jump_T;
+	jump_g0  = jump_g;
 
 	// Credit: Stack Overflow discussion on basic gravity jump physics: https://stackoverflow.com/questions/55373206/basic-gravity-implementation-in-opengl
 	jump_v0 = 0.5f * jump_g * jump_T; 
@@ -105,6 +108,7 @@ PlayMode::~PlayMode() {
 }
 
 bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size) {
+	// Credit: used ChatGPT for structring this function
     float aspect = float(window_size.x) / float(window_size.y);
 
     // Place the panel in bottom-right with a margin:
@@ -152,9 +156,9 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 void PlayMode::update(float elapsed)
 {
-	// --- Jumper: gravity-based ballistic jump (exactly 1 Hz) ---
+	// --- Jumper ---
 	if (jumper) {
-		// substep if needed to keep integration stable on large elapsed:
+		// Credit: Stack Overflow discussion on basic gravity jump physics: https://stackoverflow.com/questions/55373206/basic-gravity-implementation-in-opengl
 		float remaining = elapsed;
 		while (remaining > 0.0f) {
 			float dt = std::min(remaining, 1.0f / 120.0f); // up to 120 Hz substeps
@@ -176,7 +180,7 @@ void PlayMode::update(float elapsed)
         const glm::vec3 mid = 0.5f * (left_anchor->position + right_anchor->position);
         rope->position = mid;
 
-		// Credit: Used ChatGPT to help me with the math to create the rope rotation.
+		// Credit: Used ChatGPT to help me with the math to handle the rope rotation.
         float err = rope_theta_target - rope_theta;
         err = std::atan2(std::sin(err), std::cos(err)); // wrap to [-pi,pi] to get shortest path:
         float max_step = rope_slew_rate * elapsed;
@@ -186,60 +190,61 @@ void PlayMode::update(float elapsed)
 		// printf("rope->rotation: (%f, %f, %f, %f)\n", rope->rotation.w, rope->rotation.x, rope->rotation.y, rope->rotation.z);
 	}
 
-	// --- scoring / pass + collision detection ---
+	// --- scoring, detect rope pass and collision ---
 	{
 		jumper_airborne = (jump_z > 0.1f);
 		if (!jumper_airborne_prev && jumper_airborne) {
 			rope_passed  = false;  // new jump just started
 		}
 
-		//?? some mathmatical calculation might be here involving theta_under, delta_under and prev_delta_under.
-		// current wrapped delta to "under-foot" (6 o'clock) angle:
+		// Credit: used ChatGPT to help me with the math to detect whether the rope passed under the jumper without collision
 		float delta_under = std::atan2(std::sin(rope_theta - theta_under),
-									   std::cos(rope_theta - theta_under));
-		// printf("jump_z: %f, jumper_airborne: %d, jumper_airborne_prev: %d, rope_passed: %d, rope_theta (deg): %f, theta_under (deg): %f, delta_under (deg): %f\n",
-		// 	   jump_z, jumper_airborne, jumper_airborne_prev, rope_passed,
-		// 	   glm::degrees(rope_theta), glm::degrees(theta_under), glm::degrees(delta_under));
+									   std::cos(rope_theta - theta_under)); // current wrapped delta to "under-foot" (6 o'clock) angle:
 
 		if (jumper_airborne && !rope_passed) // when in air
 		{
-			// Credit: used ChatGPT to help me with the math to detect whether the rope passed under the jumper.
-			
-
-			bool sign_cross = (delta_under > 0.0f && prev_delta_under <= 0.0f) ||
+			bool sign_flip = (delta_under > 0.0f && prev_delta_under <= 0.0f) ||
 							  (delta_under < 0.0f && prev_delta_under >= 0.0f);
 
 			// is this sign flip happening up near the ±π boundary (i.e., over the head)?
-			bool near_pi = (std::abs(prev_delta_under) > float(M_PI) - near_pi_window) &&
-						   (std::abs(delta_under) > float(M_PI) - near_pi_window);
+			bool near_top = (std::abs(prev_delta_under) > float(M_PI) - near_top_window) &&
+						   (std::abs(delta_under) > float(M_PI) - near_top_window);
 
-			rope_passed = sign_cross && !near_pi; // genuine pass under feet
+			rope_passed = sign_flip && !near_top;
 		}
 
 		if (jumper_airborne_prev && !jumper_airborne) // just landed
 		{
-			// printf(" --- LANDED: %d\n", score);
 			if (rope_passed) {
 				++score; 
-				// printf(" --- SCORE: %d\n", score);
+				if (score > best_score) best_score = score;
+
+				// speed up to increase difficulty: shorter period ⇒ lower v0 ⇒ quicker hops
+				jump_T = std::max(jump_T_min, jump_T * jump_speedup);
+				jump_g /= jump_speedup;
+				jump_v0 = 0.5f * jump_g * jump_T;
+				jump_vz = jump_v0;
 			}
 			rope_passed = false;
 		}
 
-		// collision heuristic: if rope is near under-foot angle AND feet are low -> reset score
+		// if rope is near under-foot angle AND feet are low -> reset score
 		// debounce with a small cooldown so we don't spam resets across a few frames
 		if (collision_cooldown > 0.0f)
 			collision_cooldown -= elapsed;
-		if (std::abs(delta_under) < collide_window && jump_z <= foot_clearance)
+		if (std::abs(delta_under) < collide_window && jump_z <= foot_height_threshold)
 		{
 			if (collision_cooldown <= 0.0f)
 			{
 				score = 0;
 				collision_cooldown = 0.30f; // seconds
+				jump_T  = jump_T0;
+				jump_g  = jump_g0;
+				jump_v0 = 0.5f * jump_g * jump_T;
+				jump_vz = jump_v0;
 			}
 		}
 
-		// remember for next frame:
 		jumper_airborne_prev = jumper_airborne;
 		prev_delta_under = delta_under;
 	}
@@ -285,12 +290,12 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 		));
 
 		constexpr float H = 0.09f;
-		lines.draw_text("Click and drag in the bottom right circle to sway the rope. Try to jump more continuously!", // any better ideas for this instruction? need to be no longer than this
+		lines.draw_text("Spin the rope with the circle on the right. Jump as long as you can!",
 			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
 			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
 			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
 		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Click and drag in the bottom right circle to sway the rope. Try to jump more continuously",
+		lines.draw_text("Spin the rope with the circle on the right. Jump as long as you can!",
 						glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + 0.1f * H + ofs, 0.0),
 						glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
 						glm::u8vec4(0xff, 0xff, 0xff, 0x00));
@@ -366,10 +371,10 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 
 		const float H = 0.10f; // scale
 		// anchor near top-right; we don't have text width, so just place with margin
-		glm::vec3 pos = glm::vec3(aspect - panel_margin - 6.0f * H,
+		glm::vec3 pos = glm::vec3(aspect - panel_margin - 12.0f * H,
 								  1.0f - panel_margin - 1.2f * H,
 								  0.0f);
-		std::string text = "Score: " + std::to_string(score);
+		std::string text = "Score: " + std::to_string(score) + "    Best score: " + std::to_string(best_score);
 
 		// shadow
 		float ofs = 2.0f / drawable_size.y;
