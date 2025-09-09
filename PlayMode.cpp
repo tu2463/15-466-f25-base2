@@ -121,7 +121,7 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
             float dead = panel_dead_frac * R;
             if (glm::length(v) >= dead) {
                 panel_angle = angle_from_top_cw(v);
-                rope_theta_target = panel_angle; // direct mapping: panel angle = rope target
+                rope_theta_target = -panel_angle; // direct mapping: panel angle = rope target
             }
             return true;
         }
@@ -152,18 +152,6 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 void PlayMode::update(float elapsed)
 {
-	// // --- Jumper (rise/fall once per second) ---
-	// {
-	// 	if (jumper) {
-	// 		// Credit: Used ChatGPT to help me with the math to create jumping animation.
-	// 		jumper_time += elapsed;                      // accumulate seconds
-	// 		float phase = jumper_time - std::floor(jumper_time); // [0,1)
-	// 		// half-sine: feet on ground for half the cycle, airborne for half:
-    // 		float z_offset = jumper_amp * std::max(0.0f, std::sin(2.0f * float(M_PI) * phase));
-	// 		jumper->position = jumper_base_position + WORLD_Z * z_offset;
-	// 	}
-	// }
-
 	// --- Jumper: gravity-based ballistic jump (exactly 1 Hz) ---
 	if (jumper) {
 		// substep if needed to keep integration stable on large elapsed:
@@ -183,7 +171,6 @@ void PlayMode::update(float elapsed)
 		jumper->position = jumper_base_position + WORLD_Z * jump_z;
 	}
 
-
 	// --- Rope (rotation around x, towards cursor) ---
     if (rope && left_anchor && right_anchor) {
         const glm::vec3 mid = 0.5f * (left_anchor->position + right_anchor->position);
@@ -197,9 +184,63 @@ void PlayMode::update(float elapsed)
         rope_theta += step;
 		rope->rotation = rope_base_rotation * glm::angleAxis(rope_theta, WORLD_Y);
 		// printf("rope->rotation: (%f, %f, %f, %f)\n", rope->rotation.w, rope->rotation.x, rope->rotation.y, rope->rotation.z);
-    }
+	}
 
-	//reset button press counters:
+	// --- scoring / pass + collision detection ---
+	{
+		jumper_airborne = (jump_z > 0.1f);
+		if (!jumper_airborne_prev && jumper_airborne) {
+			rope_passed  = false;  // new jump just started
+		}
+
+		// Credit: used ChatGPT to help me with the math to detect whether the rope passed under the jumper.
+		// current wrapped delta to "under-foot" (6 o'clock) angle:
+		float delta_under = std::atan2(std::sin(rope_theta - theta_under),
+									   std::cos(rope_theta - theta_under)); //?? some mathmatical calculation might be here involving theta_under, delta_under and prev_delta_under.
+
+		printf("jump_z: %f, jumper_airborne: %d, jumper_airborne_prev: %d, rope_passed: %d, rope_theta (deg): %f, theta_under (deg): %f, delta_under (deg): %f\n",
+				jump_z, jumper_airborne, jumper_airborne_prev, rope_passed,
+				glm::degrees(rope_theta), glm::degrees(theta_under), glm::degrees(delta_under));
+
+		// while airborne: detect a single pass via sign-crossing of delta_under:
+		if (jumper_airborne && !rope_passed)
+		{
+			// ignore very small values near zero to avoid jitter-triggering:
+			if (std::abs(prev_delta_under) > pass_eps || std::abs(delta_under) > pass_eps)
+			{
+				rope_passed = (delta_under > 0.0f && prev_delta_under <= 0.0f) || (delta_under < 0.0f && prev_delta_under >= 0.0f);
+			}
+		}
+
+		if (jumper_airborne_prev && !jumper_airborne) // just landed
+		{
+			printf(" --- LANDED: %d\n", score);
+			if (rope_passed) {
+				++score; 
+				// printf(" --- SCORE: %d\n", score);
+			}
+			rope_passed = false;
+		}
+
+		// collision heuristic: if rope is near under-foot angle AND feet are low -> reset score
+		// debounce with a small cooldown so we don't spam resets across a few frames
+		if (collision_cooldown > 0.0f)
+			collision_cooldown -= elapsed;
+		if (std::abs(delta_under) < collide_window && jump_z <= foot_clearance)
+		{
+			if (collision_cooldown <= 0.0f)
+			{
+				score = 0;
+				collision_cooldown = 0.30f; // seconds
+			}
+		}
+
+		// remember for next frame:
+		jumper_airborne_prev = jumper_airborne;
+		prev_delta_under = delta_under;
+	}
+
+	// reset button press counters:
 	left.downs = 0;
 	right.downs = 0;
 	up.downs = 0;
@@ -229,7 +270,7 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 
 	scene.draw(*camera);
 
-	{ //use DrawLines to overlay some text:
+	{ //use DrawLines to overlay instructions:
 		glDisable(GL_DEPTH_TEST);
 		float aspect = float(drawable_size.x) / float(drawable_size.y);
 		DrawLines lines(glm::mat4(
@@ -252,8 +293,8 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	}
 
 	{ //use DrawLines to overlay the control panel and handle
-		// Credit: Used ChatGPT to help me with the math to get the handle rotation angle and map to rope rotation angle.
 		glDisable(GL_DEPTH_TEST);
+		// Credit: Used ChatGPT to help me with the math to get the handle rotation angle and map to rope rotation angle.
 		float aspect = float(drawable_size.x) / float(drawable_size.y);
 		DrawLines lines(glm::mat4(
 			1.0f / aspect, 0.0f, 0.0f, 0.0f,
@@ -307,5 +348,36 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 			glm::vec3 p1 = glm::vec3(hp + rH * glm::vec2(std::cos(a1), std::sin(a1)), 0.0f);
 			lines.draw(p0, p1, handle_col);
 		}
+	}
+
+	{ // use DrawLines to overlay scores
+		glDisable(GL_DEPTH_TEST);
+		// Credit: Used ChatGPT to draw the score at the correct top right position.
+		float aspect = float(drawable_size.x) / float(drawable_size.y);
+		DrawLines lines(glm::mat4(
+			1.0f / aspect, 0.0f, 0.0f, 0.0f,
+			0.0f, 1.0f, 0.0f, 0.0f,
+			0.0f, 0.0f, 1.0f, 0.0f,
+			0.0f, 0.0f, 0.0f, 1.0f));
+
+		const float H = 0.10f; // scale
+		// anchor near top-right; we don't have text width, so just place with margin
+		glm::vec3 pos = glm::vec3(aspect - panel_margin - 6.0f * H,
+								  1.0f - panel_margin - 1.2f * H,
+								  0.0f);
+		std::string text = "Score: " + std::to_string(score);
+
+		// shadow
+		float ofs = 2.0f / drawable_size.y;
+		lines.draw_text(text,
+						pos + glm::vec3(ofs, ofs, 0.0f),
+						glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+						glm::u8vec4(0x00, 0x00, 0x00, 0x00));
+
+		// main
+		lines.draw_text(text,
+						pos,
+						glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
+						glm::u8vec4(0xff, 0xff, 0xff, 0x00));
 	}
 }
