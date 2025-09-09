@@ -37,6 +37,7 @@ struct PlayMode : Mode {
 
 	// collision heuristic (rope hits ankles):
 	float collide_window   = glm::radians(10.0f);    // near the under-foot angle
+	float near_pi_window = glm::radians(20.0f);  // ignore sign flips if both |delta| > pi - this
 	float foot_clearance   = 0.10f;                  // rope height threshold (scene units)
 	float collision_cooldown = 0.0f;                 // debounce resets (seconds)
 

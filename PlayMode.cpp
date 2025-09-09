@@ -193,28 +193,32 @@ void PlayMode::update(float elapsed)
 			rope_passed  = false;  // new jump just started
 		}
 
-		// Credit: used ChatGPT to help me with the math to detect whether the rope passed under the jumper.
+		//?? some mathmatical calculation might be here involving theta_under, delta_under and prev_delta_under.
 		// current wrapped delta to "under-foot" (6 o'clock) angle:
 		float delta_under = std::atan2(std::sin(rope_theta - theta_under),
-									   std::cos(rope_theta - theta_under)); //?? some mathmatical calculation might be here involving theta_under, delta_under and prev_delta_under.
+									   std::cos(rope_theta - theta_under));
+		// printf("jump_z: %f, jumper_airborne: %d, jumper_airborne_prev: %d, rope_passed: %d, rope_theta (deg): %f, theta_under (deg): %f, delta_under (deg): %f\n",
+		// 	   jump_z, jumper_airborne, jumper_airborne_prev, rope_passed,
+		// 	   glm::degrees(rope_theta), glm::degrees(theta_under), glm::degrees(delta_under));
 
-		printf("jump_z: %f, jumper_airborne: %d, jumper_airborne_prev: %d, rope_passed: %d, rope_theta (deg): %f, theta_under (deg): %f, delta_under (deg): %f\n",
-				jump_z, jumper_airborne, jumper_airborne_prev, rope_passed,
-				glm::degrees(rope_theta), glm::degrees(theta_under), glm::degrees(delta_under));
-
-		// while airborne: detect a single pass via sign-crossing of delta_under:
-		if (jumper_airborne && !rope_passed)
+		if (jumper_airborne && !rope_passed) // when in air
 		{
-			// ignore very small values near zero to avoid jitter-triggering:
-			if (std::abs(prev_delta_under) > pass_eps || std::abs(delta_under) > pass_eps)
-			{
-				rope_passed = (delta_under > 0.0f && prev_delta_under <= 0.0f) || (delta_under < 0.0f && prev_delta_under >= 0.0f);
-			}
+			// Credit: used ChatGPT to help me with the math to detect whether the rope passed under the jumper.
+			
+
+			bool sign_cross = (delta_under > 0.0f && prev_delta_under <= 0.0f) ||
+							  (delta_under < 0.0f && prev_delta_under >= 0.0f);
+
+			// is this sign flip happening up near the ±π boundary (i.e., over the head)?
+			bool near_pi = (std::abs(prev_delta_under) > float(M_PI) - near_pi_window) &&
+						   (std::abs(delta_under) > float(M_PI) - near_pi_window);
+
+			rope_passed = sign_cross && !near_pi; // genuine pass under feet
 		}
 
 		if (jumper_airborne_prev && !jumper_airborne) // just landed
 		{
-			printf(" --- LANDED: %d\n", score);
+			// printf(" --- LANDED: %d\n", score);
 			if (rope_passed) {
 				++score; 
 				// printf(" --- SCORE: %d\n", score);
